@@ -1913,6 +1913,10 @@ const char *httpGetRealIP(const struct HttpConnection *http) {
   return getFromHashMap(&http->header, "x-real-ip");
 }
 
+const char *httpGetUser(const struct HttpConnection *http) {
+  return getFromHashMap(&http->header, "x-user");
+}
+
 const char *httpGetMethod(const struct HttpConnection *http) {
   return http->method;
 }

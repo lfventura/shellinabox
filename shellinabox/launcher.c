@@ -529,6 +529,7 @@ int launchChild(int service, struct Session *session, const char *url) {
   request->terminate   = -1;
   request->width       = session->width;
   request->height      = session->height;
+  const char *user = httpGetUser(session->http);
   const char *peerName = httpGetPeerName(session->http);
   strncat(request->peerName, peerName, sizeof(request->peerName) - 1);
   const char *realIP   = httpGetRealIP(session->http);
@@ -607,10 +608,11 @@ struct Utmp {
 static HashMap *childProcesses;
 
 void initUtmp(struct Utmp *utmp, int useLogin, const char *ptyPath,
-              const char *peerName, const char *realIP) {
+              const char *peerName, const char *realIP, const char *user) {
   memset(utmp, 0, sizeof(struct Utmp));
   utmp->pty                 = -1;
   utmp->useLogin            = useLogin;
+  utmp->user                = user;
 #ifdef HAVE_UTMPX_H
   utmp->utmpx.ut_type       = useLogin ? LOGIN_PROCESS : USER_PROCESS;
   dcheck(!strncmp(ptyPath, "/dev/pts", 8) ||
@@ -632,10 +634,10 @@ void initUtmp(struct Utmp *utmp, int useLogin, const char *ptyPath,
 }
 
 struct Utmp *newUtmp(int useLogin, const char *ptyPath,
-                     const char *peerName, const char *realIP) {
+                     const char *peerName, const char *realIP, const char *user) {
   struct Utmp *utmp;
   check(utmp = malloc(sizeof(struct Utmp)));
-  initUtmp(utmp, useLogin, ptyPath, peerName, realIP);
+  initUtmp(utmp, useLogin, ptyPath, peerName, realIP, user);
   return utmp;
 }
 
@@ -793,7 +795,7 @@ static int ptsname_r(int fd, char *buf, size_t buflen) {
 #endif
 
 static int forkPty(int *pty, int useLogin, struct Utmp **utmp,
-                   const char *peerName, const char *realIP) {
+                   const char *peerName, const char *realIP, const char *user) {
   int slave;
   #ifdef HAVE_OPENPTY
   char* ptyPath = NULL;
@@ -874,7 +876,7 @@ static int forkPty(int *pty, int useLogin, struct Utmp **utmp,
   #endif
 
   // Fill in utmp entry
-  *utmp                     = newUtmp(useLogin, ptyPath, peerName, realIP);
+  *utmp                     = newUtmp(useLogin, ptyPath, peerName, realIP, user);
 
   // Now, fork off the child process
   pid_t pid;
@@ -1268,7 +1270,7 @@ static void destroyVariableHashEntry(void *arg ATTR_UNUSED, char *key,
 static void execService(int width ATTR_UNUSED, int height ATTR_UNUSED,
                         struct Service *service, const char *peerName,
                         const char *realIP, char **environment,
-                        const char *url) {
+                        const char *url, const char *user) {
   UNUSED(width);
   UNUSED(height);
 
@@ -1312,6 +1314,9 @@ static void execService(int width ATTR_UNUSED, int height ATTR_UNUSED,
   addToHashMap(vars, key, stringPrintf(NULL, "%d", service->uid));
   check(key                   = strdup("url"));
   addToHashMap(vars, key, strdup(url));
+  check(Key                   = strdup("user"));
+  check(value                 = strdup(user));
+  addToHashMap(vars, key, value);
 
   enum { ENV, ARGS } state    = ENV;
   enum { NONE, SINGLE, DOUBLE
@@ -1513,7 +1518,7 @@ static void pamSessionSighupHandler(int sig ATTR_UNUSED,
 
 static void childProcess(struct Service *service, int width, int height,
                          struct Utmp *utmp, const char *peerName, const char *realIP,
-                         const char *url) {
+                         const char *url, const char *user) {
   // Set initial window size
   setWindowSize(0, width, height);
 
@@ -1688,7 +1693,7 @@ static void childProcess(struct Service *service, int width, int height,
            (void *)0, environment);
   } else {
     // Launch user provied service
-    execService(width, height, service, peerName, realIP, environment, url);
+    execService(width, height, service, peerName, realIP, environment, url, user);
   }
   _exit(1);
 }
@@ -1810,7 +1815,7 @@ static void launcherDaemon(int fd) {
                                         request.peerName,
                                         request.realIP)) == 0) {
       childProcess(services[request.service], request.width, request.height,
-                   utmp, request.peerName, request.realIP, url);
+                   utmp, request.peerName, request.realIP, url, user);
       free(url);
       _exit(1);
     } else {
